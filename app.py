@@ -80,9 +80,12 @@ if stock_file and sales_file and incoming_file:
                 master_df = all_skus.merge(stock_grouped, on='Product | Material Base SKU', how='left')
                 master_df = master_df.merge(incoming_grouped, on='Product | Material Base SKU', how='left')
                 master_df = master_df.merge(sales_grouped[['Product | Material Base SKU', 'Weekly Avg Sales', 'Sales Trend']], on='Product | Material Base SKU', how='left')
-
-                # Fill blanks with 0
-                master_df.fillna(0, inplace=True)
+                
+                # Fix the blank data types cleanly
+                master_df['Current Stock'] = master_df['Current Stock'].fillna(0)
+                master_df['Incoming Stock'] = master_df['Incoming Stock'].fillna(0)
+                master_df['Weekly Avg Sales'] = master_df['Weekly Avg Sales'].fillna(0)
+                master_df['Sales Trend'] = master_df['Sales Trend'].fillna("➖ No Recent Sales")
 
                 # --- 5. CALCULATE WEEKS OF SUPPLY & CATEGORIZE ---
                 master_df['Total Expected Stock'] = master_df['Current Stock'] + master_df['Incoming Stock']
