@@ -138,6 +138,11 @@ if stock_file and sales_file and incoming_file:
 
                 sheet7 = df[df['In_Stock_Report'] == True].copy()
                 sheet7.rename(columns={'Overall Weekly Avg': 'Weekly Avg Sales'}, inplace=True)
+                
+                # NOISE FILTER: Remove items with <1 stock, 0 demand, and 0 incoming shipments
+                noise_mask_7 = (sheet7['Current Stock'] < 1) & (sheet7['Total Weekly Demand'] == 0) & (sheet7['Incoming Stock'] == 0)
+                sheet7 = sheet7[~noise_mask_7].copy()
+                
                 sheet7['Inventory Status'] = sheet7.apply(get_inv_status, axis=1)
                 sheet7['Sales Trend'] = sheet7.apply(get_trend_status, axis=1)
                 sheet7 = sheet7.sort_values(['Product | Material Brand', 'Product | Material Code'])
@@ -153,6 +158,10 @@ if stock_file and sales_file and incoming_file:
                 sheet8_raw.rename(columns={'Overall Weekly Avg': 'Weekly Avg Sales'}, inplace=True)
                 sheet8_raw['Total Weekly Demand'] = sheet8_raw['Weekly Avg Sales'] + sheet8_raw['Weekly Prod Usage']
                 sheet8_raw['Total Expected Stock'] = sheet8_raw['Current Stock'] + sheet8_raw['Incoming Stock']
+                
+                # NOISE FILTER: Remove SKU aggregates with <1 stock, 0 demand, and 0 incoming shipments
+                noise_mask_8 = (sheet8_raw['Current Stock'] < 1) & (sheet8_raw['Total Weekly Demand'] == 0) & (sheet8_raw['Incoming Stock'] == 0)
+                sheet8_raw = sheet8_raw[~noise_mask_8].copy()
                 
                 # Recalculate WOS and Change % as an aggregate Whole SKU
                 sheet8_raw['WOS'] = sheet8_raw.apply(calc_wos, axis=1)
