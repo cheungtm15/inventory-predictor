@@ -24,18 +24,15 @@ if stock_file and sales_file and incoming_file:
                 def remove_totals(df, col_name):
                     return df[~df[col_name].astype(str).str.contains('Total', case=False, na=False)]
 
-                # --- 1. PROCESS STOCK (Now with Brand extraction) ---
+                # --- 1. PROCESS STOCK ---
                 stock_df = pd.read_excel(stock_file, sheet_name='Pivot Table', header=1)
                 stock_df = remove_totals(stock_df, 'Product | Material Code')
                 
                 stock_grouped = stock_df.groupby('Product | Material Code')['Total'].sum().reset_index()
                 stock_grouped.rename(columns={'Total': 'Current Stock'}, inplace=True)
                 
-                # Extract Brand (take the first instance for each product code)
                 brand_mapping = stock_df.groupby('Product | Material Code')['Product | Material Brand'].first().reset_index()
                 stock_grouped = stock_grouped.merge(brand_mapping, on='Product | Material Code', how='left')
-                
-                # Tag these items so we know they physically exist in the warehouse system
                 stock_grouped['In_Stock_Report'] = True
 
                 # --- 2. PROCESS INCOMING ---
@@ -82,7 +79,6 @@ if stock_file and sales_file and incoming_file:
                              .merge(sales_grouped[['Product | Material Code', 'Overall Weekly Avg', 'Current Week Sales', 'Prev Weekly Avg', 'Change %', 'Quantity Change']], on='Product | Material Code', how='left')\
                              .merge(prod_grouped[['Product | Material Code', 'Weekly Prod Usage']], on='Product | Material Code', how='left')
 
-                # Ensure non-stock report items are properly marked as False
                 df.fillna({
                     'Current Stock': 0, 'Incoming Stock': 0, 'Overall Weekly Avg': 0, 
                     'Weekly Prod Usage': 0, 'Current Week Sales': 0, 'Prev Weekly Avg': 0, 
@@ -92,77 +88,84 @@ if stock_file and sales_file and incoming_file:
                 df['Total Weekly Demand'] = df['Overall Weekly Avg'] + df['Weekly Prod Usage']
                 df['Total Expected Stock'] = df['Current Stock'] + df['Incoming Stock']
                 
+                # Fixed WOS Calculation to handle negatives safely
                 def calc_wos(row):
                     if row['Total Weekly Demand'] <= 0: return 999 if row['Total Expected Stock'] > 0 else 0
+                    if row['Total Expected Stock'] <= 0: return 0.0 # Prevent negative WOS from messing up sorting
                     return row['Total Expected Stock'] / row['Total Weekly Demand']
                 df['WOS'] = df.apply(calc_wos, axis=1)
 
                 df['Change % Display'] = (df['Change %'] * 100).fillna(0).round(1).astype(str) + "%"
 
-                # --- 6. CREATE THE 6 ACTIONABLE LISTS WITH BRAND SORTING ---
+                # --- 6. CREATE THE 6 ACTIONABLE LISTS ---
                 
-                cat1 = df[(df['Total Weekly Demand'] == 0) & (df['Current Stock'] > 0)].sort_values('Current Stock', ascending=False)
+                # Tab 1: Dead Stock (Added Review PO flag)
+                cat1 = df[(df['Total Weekly Demand'] == 0) & (df['Current Stock'] > 0)].sort_values('Current Stock', ascending=False).copy()
+                cat1['Action Recommended'] = cat1['Incoming Stock'].apply(lambda x: "🚨 Review PO" if x > 0 else "Hold / Discount")
                 
-                cat2 = df[(df['Total Weekly Demand'] > 0) & (df['WOS'] > 10) & (df['WOS'] != 999)].sort_values('WOS', ascending=False)
+                # Tab 2: Slow Movers (Added Review PO flag)
+                cat2 = df[(df['Total Weekly Demand'] > 0) & (df['WOS'] > 10) & (df['WOS'] != 999)].sort_values('WOS', ascending=False).copy()
+                cat2['Action Recommended'] = cat2['Incoming Stock'].apply(lambda x: "🚨 Review PO" if x > 0 else "Monitor")
                 
-                # Rule: Must exist in stock report, sorted by Brand then WOS
-                cat3 = df[(df['Total Weekly Demand'] > 0) & (df['WOS'] < 4) & (df['In_Stock_Report'] == True)]\
-                        .sort_values(['Product | Material Brand', 'WOS'], ascending=[True, True])
+                # Tab 3: Understock Risk (COMPLETELY REVAMPED)
+                cat3 = df[(df['Total Weekly Demand'] > 0) & (df['Total Expected Stock'] / df['Total Weekly Demand'] < 4) & (df['In_Stock_Report'] == True)].copy()
                 
-                # Rule: Must exist in stock report, sorted by Brand then WOS
+                def get_risk_level(row):
+                    if row['Total Expected Stock'] <= 0: return "1. 🚨 OUT OF STOCK / NEGATIVE"
+                    elif row['WOS'] <= 2: return "2. 🔴 CRITICAL (< 2 Weeks)"
+                    else: return "3. 🟡 LOW STOCK (2-4 Weeks)"
+                
+                cat3['Risk Level'] = cat3.apply(get_risk_level, axis=1)
+                # Sort by Risk Level first (Out of stock at top), then by Highest Demand (Biggest sellers first)
+                cat3 = cat3.sort_values(['Risk Level', 'Total Weekly Demand'], ascending=[True, False])
+                
+                # Tab 4: Reorder Needed
                 cat4 = df[(df['Total Weekly Demand'] > 0) & (df['WOS'] >= 4) & (df['WOS'] <= 10) & (df['Incoming Stock'] == 0) & (df['In_Stock_Report'] == True)]\
                         .sort_values(['Product | Material Brand', 'WOS'], ascending=[True, True])
                 
+                # Tab 5 & 6: Spikes and Drops
                 cat5 = df[df['Change %'] > 0.3].sort_values('Quantity Change', ascending=False)
                 
                 cat6 = df[df['Change %'] < -0.3].copy()
                 cat6['Is_Out_Of_Stock'] = cat6['Current Stock'] <= 0
                 cat6 = cat6.sort_values(['Is_Out_Of_Stock', 'Quantity Change'], ascending=[True, True])
 
-                # --- 7. EXPORT TO EXCEL (WITH AUTO-FORMATTING) ---
+                # --- 7. EXPORT TO EXCEL ---
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    # Write all the sheets
-                    cat1[['Product | Material Code', 'Current Stock', 'Incoming Stock', 'Total Expected Stock']].to_excel(writer, sheet_name="1. Dead Stock", index=False)
-                    cat2[['Product | Material Code', 'Current Stock', 'Total Weekly Demand', 'WOS']].to_excel(writer, sheet_name="2. Slow Movers", index=False)
-                    cat3[['Product | Material Brand', 'Product | Material Code', 'WOS', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Total Weekly Demand']].to_excel(writer, sheet_name="3. Understock Risk", index=False)
+                    cat1[['Product | Material Code', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Action Recommended']].to_excel(writer, sheet_name="1. Dead Stock", index=False)
+                    cat2[['Product | Material Code', 'Current Stock', 'Total Weekly Demand', 'WOS', 'Action Recommended']].to_excel(writer, sheet_name="2. Slow Movers", index=False)
+                    cat3[['Risk Level', 'Product | Material Brand', 'Product | Material Code', 'WOS', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Total Weekly Demand']].to_excel(writer, sheet_name="3. Understock Risk", index=False)
                     cat4[['Product | Material Brand', 'Product | Material Code', 'WOS', 'Current Stock', 'Total Weekly Demand']].to_excel(writer, sheet_name="4. Reorder Needed", index=False)
                     cat5[['Product | Material Code', 'Quantity Change', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']].to_excel(writer, sheet_name="5. Sales Spikes", index=False)
                     cat6[['Product | Material Code', 'Quantity Change', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']].to_excel(writer, sheet_name="6. Sales Drops", index=False)
                     
-                    # Apply Excel UI Formatting (Freeze Top Row & Auto-Width)
+                    # Auto-width formatting
                     for sheetname, worksheet in writer.sheets.items():
-                        # Freeze the top header row
                         worksheet.freeze_panes = 'A2'
-                        
-                        # Loop through columns and auto-adjust widths like "double-clicking"
                         for col in worksheet.columns:
                             max_length = 0
                             column_letter = col[0].column_letter
                             for cell in col:
                                 try:
-                                    if len(str(cell.value)) > max_length:
-                                        max_length = len(str(cell.value))
-                                except:
-                                    pass
-                            # Add a little padding to the width
-                            adjusted_width = (max_length + 2)
-                            worksheet.column_dimensions[column_letter].width = adjusted_width
+                                    if len(str(cell.value)) > max_length: max_length = len(str(cell.value))
+                                except: pass
+                            worksheet.column_dimensions[column_letter].width = (max_length + 2)
 
                 buffer.seek(0)
 
                 # --- 8. DISPLAY ON SCREEN ---
-                st.success("Actionable items generated successfully! Click download for your formatted Excel file.")
-                st.download_button(label="📥 Download Formatted Action Items (.xlsx)", data=buffer, file_name="Inventory_Action_Items_By_Product.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.success("Actionable items generated successfully!")
+                st.download_button(label="📥 Download Formatted Action Items (.xlsx)", data=buffer, file_name="Inventory_Action_Items.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 
                 t1, t2, t3, t4, t5, t6 = st.tabs(["1. Dead Stock", "2. Slow Movers", "3. Understock", "4. Reorder Watch", "5. Spikes (+30%)", "6. Drops (-30%)"])
                 
-                with t1: st.dataframe(cat1[['Product | Material Code', 'Current Stock', 'Incoming Stock', 'Total Expected Stock']], use_container_width=True)
-                with t2: st.dataframe(cat2[['Product | Material Code', 'Current Stock', 'Total Weekly Demand', 'WOS']], use_container_width=True)
-                with t3: st.dataframe(cat3[['Product | Material Brand', 'Product | Material Code', 'WOS', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Total Weekly Demand']], use_container_width=True)
-                with t4: st.dataframe(cat4[['Product | Material Brand', 'Product | Material Code', 'WOS', 'Current Stock', 'Total Weekly Demand']], use_container_width=True)
-                with t5: st.dataframe(cat5[['Product | Material Code', 'Quantity Change', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']], use_container_width=True)
-                with t6: st.dataframe(cat6[['Product | Material Code', 'Quantity Change', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']], use_container_width=True)
+                with t1: st.dataframe(cat1[['Product | Material Code', 'Current Stock', 'Incoming Stock', 'Action Recommended']], use_container_width=True)
+                with t2: st.dataframe(cat2[['Product | Material Code', 'Current Stock', 'WOS', 'Action Recommended']], use_container_width=True)
+                with t3: st.dataframe(cat3[['Risk Level', 'Product | Material Brand', 'Product | Material Code', 'WOS', 'Total Weekly Demand']], use_container_width=True)
+                with t4: st.dataframe(cat4[['Product | Material Brand', 'Product | Material Code', 'WOS', 'Total Weekly Demand']], use_container_width=True)
+                with t5: st.dataframe(cat5[['Product | Material Code', 'Quantity Change', 'Current Stock']], use_container_width=True)
+                with t6: st.dataframe(cat6[['Product | Material Code', 'Quantity Change', 'Current Stock']], use_container_width=True)
 
             except Exception as e:
                 st.error(f"Error processing files: {e}")
