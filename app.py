@@ -4,7 +4,7 @@ import io
 
 st.set_page_config(page_title="Actionable Inventory", page_icon="🎯", layout="wide")
 st.title("🎯 Actionable Inventory Engine")
-st.write("Upload your Excel files to generate your daily 6-step actionable inventory to-do list.")
+st.write("Upload your Excel files to generate your daily 6-step actionable inventory to-do list (by exact Product Code).")
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
@@ -18,22 +18,22 @@ with col4:
 
 if stock_file and sales_file and incoming_file:
     if st.button("Generate Action Items", type="primary"):
-        with st.spinner("Analyzing run-rates and calculating trends..."):
+        with st.spinner("Analyzing run-rates and calculating trends by Product Code..."):
             try:
                 # --- 1. PROCESS STOCK ---
                 stock_df = pd.read_excel(stock_file, sheet_name='Pivot Table', header=1)
-                stock_grouped = stock_df.groupby('Product | Material Base SKU')['Total'].sum().reset_index()
+                stock_grouped = stock_df.groupby('Product | Material Code')['Total'].sum().reset_index()
                 stock_grouped.rename(columns={'Total': 'Current Stock'}, inplace=True)
 
                 # --- 2. PROCESS INCOMING ---
                 incoming_df = pd.read_excel(incoming_file, sheet_name='Summary Data')
-                incoming_grouped = incoming_df.groupby('Product | Material Base SKU')['Actual Outstanding Quantity'].sum().reset_index()
+                incoming_grouped = incoming_df.groupby('Product | Material Code')['Actual Outstanding Quantity'].sum().reset_index()
                 incoming_grouped.rename(columns={'Actual Outstanding Quantity': 'Incoming Stock'}, inplace=True)
 
                 # --- 3. PROCESS SALES & TRENDS ---
                 sales_df = pd.read_excel(sales_file, sheet_name='Pivot Table', header=1)
                 week_cols = [c for c in sales_df.columns if str(c).isdigit()]
-                sales_grouped = sales_df.groupby('Product | Material Base SKU')[week_cols].sum().reset_index()
+                sales_grouped = sales_df.groupby('Product | Material Code')[week_cols].sum().reset_index()
                 
                 # Get the current week vs the previous weeks average
                 current_week = week_cols[-1]
@@ -50,21 +50,21 @@ if stock_file and sales_file and incoming_file:
                 if prod_file:
                     prod_df = pd.read_excel(prod_file, sheet_name='Summary Data')
                     prod_df['Total Moved'] = prod_df.get('Quantity In', pd.Series(0)).fillna(0) + prod_df.get('Quantity Out', pd.Series(0)).fillna(0)
-                    prod_grouped = prod_df.groupby('Product | Material Base SKU')['Total Moved'].sum().reset_index()
+                    prod_grouped = prod_df.groupby('Product | Material Code')['Total Moved'].sum().reset_index()
                     prod_grouped['Weekly Prod Usage'] = prod_grouped['Total Moved'] / 4
                 else:
-                    prod_grouped = pd.DataFrame(columns=['Product | Material Base SKU', 'Weekly Prod Usage'])
+                    prod_grouped = pd.DataFrame(columns=['Product | Material Code', 'Weekly Prod Usage'])
 
                 # --- 5. MERGE & CALCULATE ---
-                all_skus = pd.DataFrame({'Product | Material Base SKU': pd.concat([
-                    stock_grouped['Product | Material Base SKU'], incoming_grouped['Product | Material Base SKU'], 
-                    sales_grouped['Product | Material Base SKU'], prod_grouped['Product | Material Base SKU']
+                all_codes = pd.DataFrame({'Product | Material Code': pd.concat([
+                    stock_grouped['Product | Material Code'], incoming_grouped['Product | Material Code'], 
+                    sales_grouped['Product | Material Code'], prod_grouped['Product | Material Code']
                 ]).unique()})
 
-                df = all_skus.merge(stock_grouped, on='Product | Material Base SKU', how='left')\
-                             .merge(incoming_grouped, on='Product | Material Base SKU', how='left')\
-                             .merge(sales_grouped[['Product | Material Base SKU', 'Overall Weekly Avg', 'Current Week Sales', 'Prev Weekly Avg', 'Change %']], on='Product | Material Base SKU', how='left')\
-                             .merge(prod_grouped[['Product | Material Base SKU', 'Weekly Prod Usage']], on='Product | Material Base SKU', how='left')
+                df = all_codes.merge(stock_grouped, on='Product | Material Code', how='left')\
+                             .merge(incoming_grouped, on='Product | Material Code', how='left')\
+                             .merge(sales_grouped[['Product | Material Code', 'Overall Weekly Avg', 'Current Week Sales', 'Prev Weekly Avg', 'Change %']], on='Product | Material Code', how='left')\
+                             .merge(prod_grouped[['Product | Material Code', 'Weekly Prod Usage']], on='Product | Material Code', how='left')
 
                 df.fillna({'Current Stock': 0, 'Incoming Stock': 0, 'Overall Weekly Avg': 0, 'Weekly Prod Usage': 0, 'Current Week Sales': 0, 'Prev Weekly Avg': 0}, inplace=True)
 
@@ -102,22 +102,22 @@ if stock_file and sales_file and incoming_file:
                 # --- 7. EXPORT TO EXCEL FEATURE ---
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    cat1[['Product | Material Base SKU', 'Current Stock', 'Incoming Stock']].to_excel(writer, sheet_name="1. Dead Stock", index=False)
-                    cat2[['Product | Material Base SKU', 'Current Stock', 'Total Weekly Demand', 'WOS']].to_excel(writer, sheet_name="2. Slow Movers", index=False)
-                    cat3[['Product | Material Base SKU', 'Total Weekly Demand', 'Current Stock', 'Incoming Stock', 'WOS']].to_excel(writer, sheet_name="3. Understock Risk", index=False)
-                    cat4[['Product | Material Base SKU', 'Total Weekly Demand', 'Current Stock', 'WOS']].to_excel(writer, sheet_name="4. Reorder Needed", index=False)
-                    cat5[['Product | Material Base SKU', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']].to_excel(writer, sheet_name="5. Sales Spikes", index=False)
-                    cat6[['Product | Material Base SKU', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']].to_excel(writer, sheet_name="6. Sales Drops", index=False)
+                    cat1[['Product | Material Code', 'Current Stock', 'Incoming Stock']].to_excel(writer, sheet_name="1. Dead Stock", index=False)
+                    cat2[['Product | Material Code', 'Current Stock', 'Total Weekly Demand', 'WOS']].to_excel(writer, sheet_name="2. Slow Movers", index=False)
+                    cat3[['Product | Material Code', 'Total Weekly Demand', 'Current Stock', 'Incoming Stock', 'WOS']].to_excel(writer, sheet_name="3. Understock Risk", index=False)
+                    cat4[['Product | Material Code', 'Total Weekly Demand', 'Current Stock', 'WOS']].to_excel(writer, sheet_name="4. Reorder Needed", index=False)
+                    cat5[['Product | Material Code', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']].to_excel(writer, sheet_name="5. Sales Spikes", index=False)
+                    cat6[['Product | Material Code', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']].to_excel(writer, sheet_name="6. Sales Drops", index=False)
                 buffer.seek(0)
 
                 # --- 8. DISPLAY ON SCREEN ---
                 st.success("Actionable items generated successfully!")
-                st.download_button(label="📥 Download Action Items to Excel", data=buffer, file_name="Inventory_Action_Items.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button(label="📥 Download Action Items to Excel", data=buffer, file_name="Inventory_Action_Items_By_Product.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 
                 t1, t2, t3, t4, t5, t6 = st.tabs(["1. Dead Stock", "2. Overstock/Slow", "3. Understock", "4. Reorder Watch", "5. Spikes (+30%)", "6. Drops (-30%)"])
                 
-                display_cols_standard = ['Product | Material Base SKU', 'Current Stock', 'Incoming Stock', 'Total Weekly Demand', 'WOS']
-                display_cols_trend = ['Product | Material Base SKU', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']
+                display_cols_standard = ['Product | Material Code', 'Current Stock', 'Incoming Stock', 'Total Weekly Demand', 'WOS']
+                display_cols_trend = ['Product | Material Code', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']
 
                 with t1: st.dataframe(cat1[display_cols_standard], use_container_width=True)
                 with t2: st.dataframe(cat2[display_cols_standard], use_container_width=True)
