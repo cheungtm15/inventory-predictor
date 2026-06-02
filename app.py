@@ -200,20 +200,21 @@ if stock_file and sales_file and incoming_file:
                     if 'Current Stock' in df_to_style.columns: format_dict['Current Stock'] = '{:.2f}'
                     styler = styler.format(format_dict)
                     
-                    # Heatmaps (Gradients)
-                    if sheet_name == "1. Dead Stock":
-                        styler = styler.background_gradient(subset=['Current Stock'], cmap='Reds')
-                    elif sheet_name == "2. Slow Movers":
-                        styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='Reds', vmin=10, vmax=52)
-                    elif sheet_name == "3. Understock Risk":
-                        styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='Reds_r', vmin=0, vmax=4)
-                        styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Greens')
-                    elif sheet_name == "4. Reorder Needed":
-                        styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='RdYlGn', vmin=4, vmax=10)
-                    elif sheet_name == "5. Sales Spikes":
-                        styler = styler.background_gradient(subset=['Quantity Change'], cmap='Greens')
-                    elif sheet_name == "6. Sales Drops":
-                        styler = styler.background_gradient(subset=['Quantity Change'], cmap='Reds_r')
+                    # Heatmaps (Gradients) - ONLY APPLY IF DATAFRAME IS NOT EMPTY
+                    if not df_to_style.empty:
+                        if sheet_name == "1. Dead Stock":
+                            styler = styler.background_gradient(subset=['Current Stock'], cmap='Reds')
+                        elif sheet_name == "2. Slow Movers":
+                            styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='Reds', vmin=10, vmax=52)
+                        elif sheet_name == "3. Understock Risk":
+                            styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='Reds_r', vmin=0, vmax=4)
+                            styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Greens')
+                        elif sheet_name == "4. Reorder Needed":
+                            styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='RdYlGn', vmin=4, vmax=10)
+                        elif sheet_name == "5. Sales Spikes":
+                            styler = styler.background_gradient(subset=['Quantity Change'], cmap='Greens')
+                        elif sheet_name == "6. Sales Drops":
+                            styler = styler.background_gradient(subset=['Quantity Change'], cmap='Reds_r')
                         
                     return styler
 
