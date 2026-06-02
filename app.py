@@ -18,7 +18,7 @@ with col4:
 
 if stock_file and sales_file and incoming_file:
     if st.button("Generate Action Items", type="primary"):
-        with st.spinner("Applying heatmaps, calculating weeks of supply, and cleaning data..."):
+        with st.spinner("Applying heatmaps, calculating weeks of stock, and cleaning data..."):
             try:
                 # --- HELPER TO CLEAN PIVOT TABLE TOTALS ---
                 def remove_totals(df, col_name):
@@ -103,32 +103,33 @@ if stock_file and sales_file and incoming_file:
                 df['Total Expected Stock'] = df['Current Stock'] + df['Incoming Stock']
                 
                 def calc_wos(row):
-                    if row['Avg. Weekly Demand'] <= 0: return 999 if row['Total Expected Stock'] > 0 else 0
+                    if row['Avg. Weekly Demand'] <= 0: return 999.0 if row['Total Expected Stock'] > 0 else 0.0
                     if row['Total Expected Stock'] <= 0: return 0.0 
                     return row['Total Expected Stock'] / row['Avg. Weekly Demand']
                 
-                df['Weeks of Supply'] = df.apply(calc_wos, axis=1)
+                df['Est. Weeks of Stock'] = df.apply(calc_wos, axis=1)
                 df['Change % Display'] = (df['Change %'] * 100).fillna(0).round(1).astype(str) + "%"
 
                 # --- 6. CREATE THE 6 ACTIONABLE TABS ---
+                
                 cat1 = df[(df['Avg. Weekly Demand'] == 0) & (df['Current Stock'] > 0)].copy()
                 cat1['Action Recommended'] = cat1['Incoming Stock'].apply(lambda x: "🚨 Review PO" if x > 0 else "Hold / Discount")
                 cat1 = cat1.sort_values(['Series', 'Current Stock'], ascending=[True, False])
                 
-                cat2 = df[(df['Avg. Weekly Demand'] > 0) & (df['Weeks of Supply'] > 10) & (df['Weeks of Supply'] != 999)].copy()
+                cat2 = df[(df['Avg. Weekly Demand'] > 0) & (df['Est. Weeks of Stock'] > 10) & (df['Est. Weeks of Stock'] != 999)].copy()
                 cat2['Action Recommended'] = cat2['Incoming Stock'].apply(lambda x: "🚨 Review PO" if x > 0 else "Monitor")
                 cat2 = cat2.sort_values(['Series', 'Current Stock'], ascending=[True, False])
                 
                 cat3 = df[(df['Avg. Weekly Demand'] > 0) & (df['Total Expected Stock'] / df['Avg. Weekly Demand'] < 4) & (df['In_Stock_Report'] == True)].copy()
                 def get_risk_level(row):
                     if row['Total Expected Stock'] <= 0: return "1. 🚨 OUT OF STOCK / NEGATIVE"
-                    elif row['Weeks of Supply'] <= 2: return "2. 🔴 CRITICAL (< 2 Weeks)"
+                    elif row['Est. Weeks of Stock'] <= 2: return "2. 🔴 CRITICAL (< 2 Weeks)"
                     else: return "3. 🟡 LOW STOCK (2-4 Weeks)"
                 cat3['Risk Level'] = cat3.apply(get_risk_level, axis=1)
                 cat3 = cat3.sort_values(['Risk Level', 'Avg. Weekly Demand'], ascending=[True, False])
                 
-                cat4 = df[(df['Avg. Weekly Demand'] > 0) & (df['Weeks of Supply'] >= 4) & (df['Weeks of Supply'] <= 10) & (df['Incoming Stock'] == 0) & (df['In_Stock_Report'] == True)]\
-                        .sort_values(['Brand', 'Weeks of Supply'], ascending=[True, True])
+                cat4 = df[(df['Avg. Weekly Demand'] > 0) & (df['Est. Weeks of Stock'] >= 4) & (df['Est. Weeks of Stock'] <= 10) & (df['Incoming Stock'] == 0) & (df['In_Stock_Report'] == True)]\
+                        .sort_values(['Brand', 'Est. Weeks of Stock'], ascending=[True, True])
                 
                 cat5 = df[df['Change %'] > 0.3].sort_values('Quantity Change', ascending=False)
                 
@@ -140,9 +141,9 @@ if stock_file and sales_file and incoming_file:
                 def get_inv_status(row):
                     if row['Avg. Weekly Demand'] == 0 and row['Current Stock'] > 0: return "Dead Stock"
                     elif row['Avg. Weekly Demand'] > 0 and row['Total Expected Stock']/row['Avg. Weekly Demand'] < 4: return "Understock Risk"
-                    elif row['Avg. Weekly Demand'] > 0 and row['Weeks of Supply'] > 10 and row['Weeks of Supply'] != 999: return "Slow Mover"
-                    elif row['Avg. Weekly Demand'] > 0 and 4 <= row['Weeks of Supply'] <= 10 and row['Incoming Stock'] == 0: return "Reorder Needed"
-                    elif row['Avg. Weekly Demand'] > 0 and 4 <= row['Weeks of Supply'] <= 10 and row['Incoming Stock'] > 0: return "Healthy (Incoming Planned)"
+                    elif row['Avg. Weekly Demand'] > 0 and row['Est. Weeks of Stock'] > 10 and row['Est. Weeks of Stock'] != 999: return "Slow Mover"
+                    elif row['Avg. Weekly Demand'] > 0 and 4 <= row['Est. Weeks of Stock'] <= 10 and row['Incoming Stock'] == 0: return "Reorder Needed"
+                    elif row['Avg. Weekly Demand'] > 0 and 4 <= row['Est. Weeks of Stock'] <= 10 and row['Incoming Stock'] > 0: return "Healthy (Incoming Planned)"
                     elif row['Avg. Weekly Demand'] == 0 and row['Total Expected Stock'] <= 0: return "Out of Stock & No Demand"
                     else: return "Unknown"
                     
@@ -171,7 +172,7 @@ if stock_file and sales_file and incoming_file:
                 noise_mask_8 = (sheet8_raw['Current Stock'] < 1) & (sheet8_raw['Avg. Weekly Demand'] == 0) & (sheet8_raw['Incoming Stock'] == 0)
                 sheet8_raw = sheet8_raw[~noise_mask_8].copy()
                 
-                sheet8_raw['Weeks of Supply'] = sheet8_raw.apply(calc_wos, axis=1)
+                sheet8_raw['Est. Weeks of Stock'] = sheet8_raw.apply(calc_wos, axis=1)
                 sheet8_raw['Change %'] = (sheet8_raw['Current Week Sales'] - sheet8_raw['Prev Weekly Avg']) / sheet8_raw['Prev Weekly Avg'].replace(0, pd.NA)
                 sheet8_raw['Change % Display'] = (sheet8_raw['Change %'] * 100).fillna(0).round(1).astype(str) + "%"
                 sheet8_raw['Inventory Status'] = sheet8_raw.apply(get_inv_status, axis=1)
@@ -179,53 +180,78 @@ if stock_file and sales_file and incoming_file:
                 sheet8 = sheet8_raw.sort_values(['Series', 'Base SKU'])
 
                 # --- 8. BULLETPROOF STYLING ENGINE ---
-                def format_wos(val):
-                    if pd.isna(val): return ""
-                    if val >= 999: return "999+ weeks (No Demand)"
-                    return f"{val:.2f} weeks"
-                
-                def format_demand(val):
-                    if pd.isna(val): return ""
-                    return f"{val:.2f}"
-
                 def apply_styles(df_to_style, sheet_name):
-                    # SAFETY: If the dataframe is empty, do not apply any styles to prevent math crashes.
                     if df_to_style.empty:
                         return df_to_style
                     
                     try:
                         styler = df_to_style.style
                         
-                        # Number Formatters
+                        # 1. Native Number Formatting (No functions, prevents Excel crash)
                         format_dict = {}
-                        if 'Weeks of Supply' in df_to_style.columns: format_dict['Weeks of Supply'] = format_wos
-                        if 'Avg. Weekly Demand' in df_to_style.columns: format_dict['Avg. Weekly Demand'] = format_demand
+                        if 'Est. Weeks of Stock' in df_to_style.columns: format_dict['Est. Weeks of Stock'] = '{:.2f} weeks'
+                        if 'Avg. Weekly Demand' in df_to_style.columns: format_dict['Avg. Weekly Demand'] = '{:.2f}'
                         if 'Quantity Change' in df_to_style.columns: format_dict['Quantity Change'] = '{:.2f}'
                         if 'Current Stock' in df_to_style.columns: format_dict['Current Stock'] = '{:.2f}'
-                        styler = styler.format(format_dict)
+                        styler = styler.format(format_dict, na_rep="0.00")
                         
-                        # Heatmaps (Gradients)
+                        # 2. Row-by-Row Conditional Formatting (Text colors)
+                        def style_rows(row):
+                            styles = [''] * len(row)
+                            
+                            # Color the Sales Trend based on Quantity Change
+                            if 'Quantity Change' in row.index and 'Sales Trend' in row.index:
+                                qty = row['Quantity Change']
+                                if pd.notna(qty):
+                                    if qty > 0:
+                                        styles[row.index.get_loc('Sales Trend')] = 'background-color: #c6efce; color: #006100;'
+                                    elif qty < 0:
+                                        styles[row.index.get_loc('Sales Trend')] = 'background-color: #ffc7ce; color: #9c0006;'
+                                        
+                            # Color the Inventory Status
+                            if 'Inventory Status' in row.index:
+                                status = str(row['Inventory Status'])
+                                idx = row.index.get_loc('Inventory Status')
+                                if "Dead" in status or "Out of" in status or "Understock" in status:
+                                    styles[idx] = 'background-color: #ffc7ce; color: #9c0006;'
+                                elif "Slow" in status or "Reorder" in status:
+                                    styles[idx] = 'background-color: #ffeb9c; color: #9c6500;'
+                                elif "Healthy" in status:
+                                    styles[idx] = 'background-color: #c6efce; color: #006100;'
+                                    
+                            return styles
+
+                        styler = styler.apply(style_rows, axis=1)
+
+                        # 3. Heatmaps (Gradients)
                         if sheet_name == "1. Dead Stock":
                             styler = styler.background_gradient(subset=['Current Stock'], cmap='Reds')
                         elif sheet_name == "2. Slow Movers":
-                            styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='Reds', vmin=10, vmax=52)
+                            styler = styler.background_gradient(subset=['Est. Weeks of Stock'], cmap='Reds', vmin=10, vmax=52)
                         elif sheet_name == "3. Understock Risk":
-                            styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='Reds_r', vmin=0, vmax=4)
+                            styler = styler.background_gradient(subset=['Est. Weeks of Stock'], cmap='Reds_r', vmin=0, vmax=4)
                             styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Greens')
                         elif sheet_name == "4. Reorder Needed":
-                            styler = styler.background_gradient(subset=['Weeks of Supply'], cmap='RdYlGn', vmin=4, vmax=10)
+                            styler = styler.background_gradient(subset=['Est. Weeks of Stock'], cmap='RdYlGn', vmin=4, vmax=10)
                         elif sheet_name == "5. Sales Spikes":
                             styler = styler.background_gradient(subset=['Quantity Change'], cmap='Greens')
                         elif sheet_name == "6. Sales Drops":
                             styler = styler.background_gradient(subset=['Quantity Change'], cmap='Reds_r')
+                        elif "Master" in sheet_name:
+                            if 'Current Stock' in df_to_style.columns:
+                                styler = styler.background_gradient(subset=['Current Stock'], cmap='Blues')
+                            if 'Avg. Weekly Demand' in df_to_style.columns:
+                                styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Purples')
                             
                         return styler
                     except Exception:
-                        # Fallback: If any heatmap math fails, return raw table
                         return df_to_style
                 
-                # SAFETY: Function to safely write to Excel even if Python Styler formatting causes issues.
+                # SAFETY: Function to safely write to Excel
                 def safe_write_excel(df, sheet_name, writer):
+                    if df.empty:
+                        df.to_excel(writer, sheet_name=sheet_name, index=False)
+                        return
                     try:
                         styled = apply_styles(df, sheet_name)
                         styled.to_excel(writer, sheet_name=sheet_name, index=False)
@@ -234,15 +260,15 @@ if stock_file and sales_file and incoming_file:
 
                 # Prep the columns for display
                 c1 = cat1[['Series', 'Code', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Action Recommended']]
-                c2 = cat2[['Series', 'Code', 'Current Stock', 'Avg. Weekly Demand', 'Weeks of Supply', 'Action Recommended']]
-                c3 = cat3[['Risk Level', 'Brand', 'Code', 'Weeks of Supply', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand']]
-                c4 = cat4[['Brand', 'Code', 'Weeks of Supply', 'Current Stock', 'Avg. Weekly Demand']]
+                c2 = cat2[['Series', 'Code', 'Current Stock', 'Avg. Weekly Demand', 'Est. Weeks of Stock', 'Action Recommended']]
+                c3 = cat3[['Risk Level', 'Brand', 'Code', 'Est. Weeks of Stock', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand']]
+                c4 = cat4[['Brand', 'Code', 'Est. Weeks of Stock', 'Current Stock', 'Avg. Weekly Demand']]
                 c5 = cat5[['Series', 'Code', 'Quantity Change', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']]
                 c6 = cat6[['Series', 'Code', 'Quantity Change', 'Change % Display', 'Current Week Sales', 'Prev Weekly Avg', 'Current Stock']]
-                s7_cols = ['Series', 'Brand', 'Base SKU', 'Code', 'Inventory Status', 'Sales Trend', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand', 'Weeks of Supply', 'Quantity Change', 'Change % Display']
-                s8_cols = ['Series', 'Brand', 'Base SKU', 'Inventory Status', 'Sales Trend', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand', 'Weeks of Supply', 'Quantity Change', 'Change % Display']
+                s7_cols = ['Series', 'Brand', 'Base SKU', 'Code', 'Inventory Status', 'Sales Trend', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand', 'Est. Weeks of Stock', 'Quantity Change', 'Change % Display']
+                s8_cols = ['Series', 'Brand', 'Base SKU', 'Inventory Status', 'Sales Trend', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand', 'Est. Weeks of Stock', 'Quantity Change', 'Change % Display']
                 
-                # --- 9. EXPORT TO EXCEL (SAFELY) ---
+                # --- 9. EXPORT TO EXCEL (WITH HEATMAPS!) ---
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     safe_write_excel(c1, "1. Dead Stock", writer)
