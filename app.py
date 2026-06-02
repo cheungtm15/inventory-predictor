@@ -111,7 +111,6 @@ if stock_file and sales_file and incoming_file:
                 df['Change % Display'] = (df['Change %'] * 100).fillna(0).round(1).astype(str) + "%"
 
                 # --- 6. CREATE THE 6 ACTIONABLE TABS ---
-                
                 cat1 = df[(df['Avg. Weekly Demand'] == 0) & (df['Current Stock'] > 0)].copy()
                 cat1['Action Recommended'] = cat1['Incoming Stock'].apply(lambda x: "🚨 Review PO" if x > 0 else "Hold / Discount")
                 cat1 = cat1.sort_values(['Series', 'Current Stock'], ascending=[True, False])
@@ -179,7 +178,7 @@ if stock_file and sales_file and incoming_file:
                 sheet8_raw['Sales Trend'] = sheet8_raw.apply(get_trend_status, axis=1)
                 sheet8 = sheet8_raw.sort_values(['Series', 'Base SKU'])
 
-                # --- 8. STYLING / HEATMAP CONFIGURATION ---
+                # --- 8. BULLETPROOF STYLING ENGINE ---
                 def format_wos(val):
                     if pd.isna(val): return ""
                     if val >= 999: return "999+ weeks (No Demand)"
@@ -190,18 +189,22 @@ if stock_file and sales_file and incoming_file:
                     return f"{val:.2f}"
 
                 def apply_styles(df_to_style, sheet_name):
-                    styler = df_to_style.style
+                    # SAFETY: If the dataframe is empty, do not apply any styles to prevent math crashes.
+                    if df_to_style.empty:
+                        return df_to_style
                     
-                    # Number Formatters
-                    format_dict = {}
-                    if 'Weeks of Supply' in df_to_style.columns: format_dict['Weeks of Supply'] = format_wos
-                    if 'Avg. Weekly Demand' in df_to_style.columns: format_dict['Avg. Weekly Demand'] = format_demand
-                    if 'Quantity Change' in df_to_style.columns: format_dict['Quantity Change'] = '{:.2f}'
-                    if 'Current Stock' in df_to_style.columns: format_dict['Current Stock'] = '{:.2f}'
-                    styler = styler.format(format_dict)
-                    
-                    # Heatmaps (Gradients) - ONLY APPLY IF DATAFRAME IS NOT EMPTY
-                    if not df_to_style.empty:
+                    try:
+                        styler = df_to_style.style
+                        
+                        # Number Formatters
+                        format_dict = {}
+                        if 'Weeks of Supply' in df_to_style.columns: format_dict['Weeks of Supply'] = format_wos
+                        if 'Avg. Weekly Demand' in df_to_style.columns: format_dict['Avg. Weekly Demand'] = format_demand
+                        if 'Quantity Change' in df_to_style.columns: format_dict['Quantity Change'] = '{:.2f}'
+                        if 'Current Stock' in df_to_style.columns: format_dict['Current Stock'] = '{:.2f}'
+                        styler = styler.format(format_dict)
+                        
+                        # Heatmaps (Gradients)
                         if sheet_name == "1. Dead Stock":
                             styler = styler.background_gradient(subset=['Current Stock'], cmap='Reds')
                         elif sheet_name == "2. Slow Movers":
@@ -215,8 +218,19 @@ if stock_file and sales_file and incoming_file:
                             styler = styler.background_gradient(subset=['Quantity Change'], cmap='Greens')
                         elif sheet_name == "6. Sales Drops":
                             styler = styler.background_gradient(subset=['Quantity Change'], cmap='Reds_r')
-                        
-                    return styler
+                            
+                        return styler
+                    except Exception:
+                        # Fallback: If any heatmap math fails, return raw table
+                        return df_to_style
+                
+                # SAFETY: Function to safely write to Excel even if Python Styler formatting causes issues.
+                def safe_write_excel(df, sheet_name, writer):
+                    try:
+                        styled = apply_styles(df, sheet_name)
+                        styled.to_excel(writer, sheet_name=sheet_name, index=False)
+                    except:
+                        df.to_excel(writer, sheet_name=sheet_name, index=False)
 
                 # Prep the columns for display
                 c1 = cat1[['Series', 'Code', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Action Recommended']]
@@ -228,18 +242,17 @@ if stock_file and sales_file and incoming_file:
                 s7_cols = ['Series', 'Brand', 'Base SKU', 'Code', 'Inventory Status', 'Sales Trend', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand', 'Weeks of Supply', 'Quantity Change', 'Change % Display']
                 s8_cols = ['Series', 'Brand', 'Base SKU', 'Inventory Status', 'Sales Trend', 'Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand', 'Weeks of Supply', 'Quantity Change', 'Change % Display']
                 
-                # --- 9. EXPORT TO EXCEL (WITH HEATMAPS!) ---
+                # --- 9. EXPORT TO EXCEL (SAFELY) ---
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    apply_styles(c1, "1. Dead Stock").to_excel(writer, sheet_name="1. Dead Stock", index=False)
-                    apply_styles(c2, "2. Slow Movers").to_excel(writer, sheet_name="2. Slow Movers", index=False)
-                    apply_styles(c3, "3. Understock Risk").to_excel(writer, sheet_name="3. Understock Risk", index=False)
-                    apply_styles(c4, "4. Reorder Needed").to_excel(writer, sheet_name="4. Reorder Needed", index=False)
-                    apply_styles(c5, "5. Sales Spikes").to_excel(writer, sheet_name="5. Sales Spikes", index=False)
-                    apply_styles(c6, "6. Sales Drops").to_excel(writer, sheet_name="6. Sales Drops", index=False)
-                    
-                    apply_styles(sheet7[s7_cols], "7. Master").to_excel(writer, sheet_name="7. Master (Code)", index=False)
-                    apply_styles(sheet8[s8_cols], "8. Master").to_excel(writer, sheet_name="8. Master (SKU)", index=False)
+                    safe_write_excel(c1, "1. Dead Stock", writer)
+                    safe_write_excel(c2, "2. Slow Movers", writer)
+                    safe_write_excel(c3, "3. Understock Risk", writer)
+                    safe_write_excel(c4, "4. Reorder Needed", writer)
+                    safe_write_excel(c5, "5. Sales Spikes", writer)
+                    safe_write_excel(c6, "6. Sales Drops", writer)
+                    safe_write_excel(sheet7[s7_cols], "7. Master (Code)", writer)
+                    safe_write_excel(sheet8[s8_cols], "8. Master (SKU)", writer)
                     
                     # Auto-width formatting
                     for sheetname, worksheet in writer.sheets.items():
@@ -255,7 +268,7 @@ if stock_file and sales_file and incoming_file:
 
                 buffer.seek(0)
 
-                # --- 10. DISPLAY ON SCREEN (ALSO STYLED!) ---
+                # --- 10. DISPLAY ON SCREEN ---
                 st.success("Actionable items and Heatmaps generated successfully!")
                 st.download_button(label="📥 Download Formatted Excel Report", data=buffer, file_name="Inventory_Action_Items.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 
