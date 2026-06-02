@@ -18,7 +18,7 @@ with col4:
 
 if stock_file and sales_file and incoming_file:
     if st.button("Generate Action Items", type="primary"):
-        with st.spinner("Applying heatmaps, calculating weeks of stock, and cleaning data..."):
+        with st.spinner("Applying heatmaps, formatting decimals, and cleaning data..."):
             try:
                 # --- HELPER TO CLEAN PIVOT TABLE TOTALS ---
                 def remove_totals(df, col_name):
@@ -98,7 +98,6 @@ if stock_file and sales_file and incoming_file:
                     'Base SKU': 'Unknown', 'Series': 'Unknown'
                 }, inplace=True)
 
-                # Cleaned up KPI Names
                 df['Avg. Weekly Demand'] = df['Overall Weekly Avg'] + df['Weekly Prod Usage']
                 df['Total Expected Stock'] = df['Current Stock'] + df['Incoming Stock']
                 
@@ -109,6 +108,11 @@ if stock_file and sales_file and incoming_file:
                 
                 df['Est. Weeks of Stock'] = df.apply(calc_wos, axis=1)
                 df['Change % Display'] = (df['Change %'] * 100).fillna(0).round(1).astype(str) + "%"
+
+                # GUARANTEE STRICT NUMERIC TYPES TO PREVENT EXCEL CRASHES
+                numeric_kpis = ['Current Stock', 'Incoming Stock', 'Total Expected Stock', 'Avg. Weekly Demand', 'Est. Weeks of Stock', 'Quantity Change', 'Current Week Sales', 'Prev Weekly Avg']
+                for col in numeric_kpis:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
                 # --- 6. CREATE THE 6 ACTIONABLE TABS ---
                 
@@ -180,74 +184,70 @@ if stock_file and sales_file and incoming_file:
                 sheet8 = sheet8_raw.sort_values(['Series', 'Base SKU'])
 
                 # --- 8. BULLETPROOF STYLING ENGINE ---
+                def style_rows(row):
+                    styles = [''] * len(row)
+                    
+                    # Trend Colors
+                    if 'Quantity Change' in row.index and 'Sales Trend' in row.index:
+                        qty = row['Quantity Change']
+                        if pd.notna(qty) and isinstance(qty, (int, float)):
+                            if qty > 0:
+                                styles[row.index.get_loc('Sales Trend')] = 'background-color: #c6efce; color: #006100;'
+                            elif qty < 0:
+                                styles[row.index.get_loc('Sales Trend')] = 'background-color: #ffc7ce; color: #9c0006;'
+                                
+                    # Status Colors
+                    if 'Inventory Status' in row.index:
+                        status = str(row['Inventory Status'])
+                        idx = row.index.get_loc('Inventory Status')
+                        if any(w in status for w in ["Dead", "Out of", "Understock"]):
+                            styles[idx] = 'background-color: #ffc7ce; color: #9c0006;'
+                        elif any(w in status for w in ["Slow", "Reorder"]):
+                            styles[idx] = 'background-color: #ffeb9c; color: #9c6500;'
+                        elif "Healthy" in status:
+                            styles[idx] = 'background-color: #c6efce; color: #006100;'
+                    return styles
+
                 def apply_styles(df_to_style, sheet_name):
                     if df_to_style.empty:
                         return df_to_style
-                    
                     try:
                         styler = df_to_style.style
                         
-                        # 1. Native Number Formatting (No functions, prevents Excel crash)
+                        # Apply strict 2-decimal formatting to ALL numeric columns dynamically
                         format_dict = {}
-                        if 'Est. Weeks of Stock' in df_to_style.columns: format_dict['Est. Weeks of Stock'] = '{:.2f} weeks'
-                        if 'Avg. Weekly Demand' in df_to_style.columns: format_dict['Avg. Weekly Demand'] = '{:.2f}'
-                        if 'Quantity Change' in df_to_style.columns: format_dict['Quantity Change'] = '{:.2f}'
-                        if 'Current Stock' in df_to_style.columns: format_dict['Current Stock'] = '{:.2f}'
-                        styler = styler.format(format_dict, na_rep="0.00")
+                        for col in df_to_style.columns:
+                            if pd.api.types.is_numeric_dtype(df_to_style[col]):
+                                if col == 'Est. Weeks of Stock':
+                                    format_dict[col] = lambda x: "999+ weeks" if pd.notna(x) and x >= 999 else f"{x:.2f} weeks"
+                                else:
+                                    format_dict[col] = "{:.2f}"
                         
-                        # 2. Row-by-Row Conditional Formatting (Text colors)
-                        def style_rows(row):
-                            styles = [''] * len(row)
-                            
-                            # Color the Sales Trend based on Quantity Change
-                            if 'Quantity Change' in row.index and 'Sales Trend' in row.index:
-                                qty = row['Quantity Change']
-                                if pd.notna(qty):
-                                    if qty > 0:
-                                        styles[row.index.get_loc('Sales Trend')] = 'background-color: #c6efce; color: #006100;'
-                                    elif qty < 0:
-                                        styles[row.index.get_loc('Sales Trend')] = 'background-color: #ffc7ce; color: #9c0006;'
-                                        
-                            # Color the Inventory Status
-                            if 'Inventory Status' in row.index:
-                                status = str(row['Inventory Status'])
-                                idx = row.index.get_loc('Inventory Status')
-                                if "Dead" in status or "Out of" in status or "Understock" in status:
-                                    styles[idx] = 'background-color: #ffc7ce; color: #9c0006;'
-                                elif "Slow" in status or "Reorder" in status:
-                                    styles[idx] = 'background-color: #ffeb9c; color: #9c6500;'
-                                elif "Healthy" in status:
-                                    styles[idx] = 'background-color: #c6efce; color: #006100;'
-                                    
-                            return styles
-
+                        styler = styler.format(format_dict, na_rep="0.00")
                         styler = styler.apply(style_rows, axis=1)
-
-                        # 3. Heatmaps (Gradients)
-                        if sheet_name == "1. Dead Stock":
+                        
+                        # Apply specific heatmaps
+                        if sheet_name == "1. Dead Stock" and 'Current Stock' in df_to_style.columns:
                             styler = styler.background_gradient(subset=['Current Stock'], cmap='Reds')
-                        elif sheet_name == "2. Slow Movers":
+                        elif sheet_name == "2. Slow Movers" and 'Est. Weeks of Stock' in df_to_style.columns:
                             styler = styler.background_gradient(subset=['Est. Weeks of Stock'], cmap='Reds', vmin=10, vmax=52)
                         elif sheet_name == "3. Understock Risk":
-                            styler = styler.background_gradient(subset=['Est. Weeks of Stock'], cmap='Reds_r', vmin=0, vmax=4)
-                            styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Greens')
-                        elif sheet_name == "4. Reorder Needed":
+                            if 'Est. Weeks of Stock' in df_to_style.columns: styler = styler.background_gradient(subset=['Est. Weeks of Stock'], cmap='Reds_r', vmin=0, vmax=4)
+                            if 'Avg. Weekly Demand' in df_to_style.columns: styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Greens')
+                        elif sheet_name == "4. Reorder Needed" and 'Est. Weeks of Stock' in df_to_style.columns:
                             styler = styler.background_gradient(subset=['Est. Weeks of Stock'], cmap='RdYlGn', vmin=4, vmax=10)
-                        elif sheet_name == "5. Sales Spikes":
+                        elif sheet_name == "5. Sales Spikes" and 'Quantity Change' in df_to_style.columns:
                             styler = styler.background_gradient(subset=['Quantity Change'], cmap='Greens')
-                        elif sheet_name == "6. Sales Drops":
+                        elif sheet_name == "6. Sales Drops" and 'Quantity Change' in df_to_style.columns:
                             styler = styler.background_gradient(subset=['Quantity Change'], cmap='Reds_r')
                         elif "Master" in sheet_name:
-                            if 'Current Stock' in df_to_style.columns:
-                                styler = styler.background_gradient(subset=['Current Stock'], cmap='Blues')
-                            if 'Avg. Weekly Demand' in df_to_style.columns:
-                                styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Purples')
+                            if 'Current Stock' in df_to_style.columns: styler = styler.background_gradient(subset=['Current Stock'], cmap='Blues')
+                            if 'Avg. Weekly Demand' in df_to_style.columns: styler = styler.background_gradient(subset=['Avg. Weekly Demand'], cmap='Purples')
                             
                         return styler
                     except Exception:
                         return df_to_style
                 
-                # SAFETY: Function to safely write to Excel
                 def safe_write_excel(df, sheet_name, writer):
                     if df.empty:
                         df.to_excel(writer, sheet_name=sheet_name, index=False)
